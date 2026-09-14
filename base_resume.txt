@@ -1,0 +1,66 @@
+ANKIT NAYAK
+Technical Program & Project Manager | Data & Cloud Platforms | 8.9+ Years Exp
+ankit.nayak.career@gmail.com | +91 7978609324 | linkedin.com/in/ankitnayak7 | Github | Bengaluru-KA-IN
+
+PROFESSIONAL SUMMARY
+PMP® Certified Technical Program & Project Manager with 8.9+ years leading enterprise-scale data and cloud-native analytics platforms for global pharma, manufacturing, and energy clients. Proven track record directing cross-functional and distributed teams across the full SDLC — from requirements definition through production deployment — while holding delivery to strict governance, quality, and regulatory standards. Fluent across AWS, Databricks, Kafka, and Agile/Scrum, with a consistent record of cutting delivery effort, reducing project delays, and achieving zero-defect outcomes in GxP-regulated environments.
+
+CORE COMPETENCIES
+Program & Delivery Management: End-to-End Delivery, SDLC Management, Agile/Scrum, Cross-Functional Team Leadership, Stakeholder Management, Risk & Issue Management, Roadmap Planning
+Technical & Cloud Platforms: Python, API Development, AWS (Lambda, Step Functions, S3, IoT Hub, Redshift), Databricks, Kafka, Data Lakes, ETL/ELT, Time-Series Systems, IT-OT Architecture, Streaming Pipelines, Real-Time Analytics
+Tools: Jira, Confluence, GitHub/GitLab, Jenkins, CI/CD, ServiceNow, Spotfire
+
+PROFESSIONAL EXPERIENCE
+
+Technical Project Manager
+Rockwell Automation | Bangalore, India | August 2022 - Present
+Key Clients: Aarti Industries, Exide, Sekhmet Pharma, Grasim TRC
+- Led Industry digitalization initiatives across multiple clients, including Energy Management, Digitalization, Digital Batch Production Records (BPR) and Real-Time Manufacturing Insights (RTMI) platforms.
+- Reduced delivery effort ~20% and project delays ~30% across four simultaneous digitalization programs - Energy Management, Chiller Digitalization, Digital BPR, and RTMI - through proactive scope rationalization and risk mitigation frameworks.
+- Architected delivery governance for a Real-Time Manufacturing Insights (RTMI) platform ingesting ~1 data point/second/tag from source systems into AWS IoT Hub -> Kafka -> KairosDB, maintaining pipeline SLA for production-critical workflows.
+- Reduced data latency and drop incidents by coordinating rapid triage loops between OT, cloud engineering, and application teams - restoring data continuity with measurably shorter mean-time-to-resolution.
+- Delivered end-to-end solutions for 3 clients by leading from data acquisition layers into cloud data pipelines to data analysis.
+- Delivered Digital Batch Production Records (BPR) platform for Sekhmet Pharma in alignment with 21 CFR Part 11, achieving zero regulatory findings during acceptance testing.
+- Built and maintained stakeholder alignment across 6+ distributed stakeholder groups per engagement - defining roadmaps, managing scope prioritization, and running milestone-based execution frameworks that kept senior sponsors informed and confident.
+
+Technology Lead
+Knowledge Lens (A Rockwell Automation Company) | Bangalore, India | November 2020 - July 2022
+Client: Pfizer Inc.
+- Delivered PKM Visual Recipe Builder (VRB) enhancements - adding branching and looping logic - unlocking complex pharmaceutical manufacturing workflow configuration that was previously manual and error-prone, accelerating recipe cycle time.
+- Built and launched QRM (Quality & Risk Management) platform integrating Cause-and-Effect analysis and FMEA across clinical and drug testing workflows, cutting investigation turnaround time for quality teams and improving compliance audit readiness.
+- Coordinated file-based data ingestion across AMPS-PDAP-PKM integrations, unifying delivery across Infosys, Rockwell, and Pfizer SMEs - a three-party alignment that consistently derailed peer programs at Pfizer.
+- Served as Product Owner across iRME and QRM programs, owning requirements, solution design, and end-to-end validation for 2 concurrent platform tracks simultaneously.
+- Designed XML-based interface specs (source-to-target mappings, transformation logic, dependency management) across 6+ upstream/downstream systems with zero post-go-live critical defects.
+
+Technical Consultant - Data Engineering & Analytics
+ZS Associates | Bangalore, India | April 2018 - October 2020
+Client: Amgen (NCSS Project, Process Development, HLEE)
+- Processed 500,000+ non-conformance records monthly through AWS Lambda -> Step Functions -> S3 -> Databricks -> Redshift pipelines, transforming raw manufacturing data into analytics-ready datasets used by Drug Quality Controllers.
+- Reduced Redshift query execution time by ~60% by engineering high-performance Parquet ingestion modules from S3, directly improving analyst productivity across Process Development teams.
+- Cut investigation and root-cause analysis time by ~25% for SMEs by delivering real-time Spotfire dashboards that surfaced quality deviation signals previously buried in batch reports.
+- Reduced system downtime by ~45% by building automated pipeline health and data quality monitoring dashboards with real-time alerting - shifting the team from reactive firefighting to proactive operations.
+- Owned end-to-end production failure management - downtime notification through RCA through corrective fix through ServiceNow incident closure - maintaining 100% SLA compliance across all tracked incidents.
+- Designed Enterprise Data Lake architecture (full and incremental load strategies, orchestration workflows, validation checks) adopted as the standard pattern for Amgen's Process Development analytics environment.
+
+Software Development Engineer
+Knowledge Lens | Bangalore, India | November 2017 - March 2020
+Glens and Support Lens Application
+- Automated incident classification and routing workflows in a purpose-built incident management platform, cutting manual triage effort by 50% and improving response time by 35%.
+- Built automated AQI data analysis pipelines and R Shiny dashboards processing sensor data from 50+ air quality monitoring devices, reducing manual analysis effort by 70% and enabling real-time policy decision-making.
+
+CERTIFICATIONS | AI, CLOUD & PROJECT MANAGEMENT
+- Project Management Professional (PMP) - Project Management Institute, June 2026
+- Building Retrieval Agents on Databricks - Databricks Academy, July 2026
+- Google Cloud Gen AI Academy APAC 2026 - Cohort 2 - Google Cloud, July 2026
+- Google Cloud Gen AI Academy APAC 2026 - Cohort 1 - Google Cloud, April 2026
+- Auditing GxP Computer Systems for Regulatory Compliance, March 2026
+- AI+ Foundation - International Institute for Learning (IIL), February 2026
+
+EDUCATION
+Master of Business Administration (MBA)
+Utkal University, Bhubaneswar, Odisha | 2014 - 2016
+
+AWARDS & RECOGNITION
+- Extra Mile Award (Sep 2021) - Rockwell Automation: Recognized for ownership and high-quality delivery consistently exceeding role expectations.
+- Government of Karnataka Appreciation (Aug 2020) - Recognized by Captain Manivannan for voluntary IT contributions supporting citizen-facing digital initiatives during COVID-19.
+- Best Initiator of the Year (Nov 2018) - Knowledge Lens: Honoured for proactive leadership and cross-departmental impact.

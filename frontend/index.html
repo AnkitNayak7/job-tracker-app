@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Job Tracker</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="login-view" class="view">
+    <div class="login-box">
+      <h1>Job Tracker</h1>
+      <p class="muted">Enter the site password to continue.</p>
+      <form id="login-form">
+        <input type="password" id="login-password" placeholder="Password" autofocus required />
+        <button type="submit">Sign in</button>
+      </form>
+      <p id="login-error" class="error hidden"></p>
+    </div>
+  </div>
+
+  <div id="app-view" class="view hidden">
+    <header>
+      <h1>Job Tracker</h1>
+      <div class="header-actions">
+        <button id="logout-btn" class="ghost">Sign out</button>
+      </div>
+    </header>
+
+    <div id="summary-bar" class="summary-bar"></div>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="accenture">Accenture</button>
+      <button class="tab-btn" data-tab="product">Product Companies</button>
+      <button class="tab-btn" data-tab="followup">Follow-up</button>
+      <button class="tab-btn" data-tab="runs">Run log</button>
+    </nav>
+
+    <div class="filters">
+      <label>Min fit:
+        <select id="min-fit-filter">
+          <option value="1">1+</option>
+          <option value="2">2+</option>
+          <option value="3" selected>3+</option>
+          <option value="4">4+</option>
+          <option value="5">5 only</option>
+        </select>
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" id="applied-only-filter" /> Applied only
+      </label>
+    </div>
+
+    <div id="table-wrap"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

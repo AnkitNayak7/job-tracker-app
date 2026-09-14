@@ -1,0 +1,7 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+motor==3.6.0
+pymongo==4.9.2
+python-docx==1.1.2
+itsdangerous==2.2.0
+pydantic==2.10.3
