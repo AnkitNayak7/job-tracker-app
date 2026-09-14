@@ -1,5 +1,7 @@
+import asyncio
 import io
 import json
+import logging
 import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -9,6 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import db
+import pipeline
 from auth import (
     COOKIE_NAME,
     MAX_AGE_SECONDS,
@@ -20,15 +24,56 @@ from auth import (
 from db import ensure_indexes, get_db, make_dedupe_key, now_iso
 
 app = FastAPI(title="Job Tracker")
+logger = logging.getLogger("job_tracker")
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 STALE_DAYS = 60
+SCHEDULED_RUN_HOUR_UTC = 1  # ~7:00am IST
+
+_pipeline_lock = asyncio.Lock()
 
 
 @app.on_event("startup")
 async def _startup():
     await ensure_indexes()
+    asyncio.create_task(_daily_scheduler())
+
+
+async def _daily_scheduler():
+    """Runs the pipeline automatically once a day, around SCHEDULED_RUN_HOUR_UTC.
+    Checked every 5 minutes rather than tied to a specific minute so a brief
+    restart near the target hour doesn't cause a missed day."""
+    last_run_date = None
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if now.hour == SCHEDULED_RUN_HOUR_UTC:
+                today = now.date().isoformat()
+                if last_run_date != today:
+                    last_run_date = today
+                    await _run_pipeline_guarded()
+        except Exception:
+            logger.exception("daily scheduler tick failed")
+        await asyncio.sleep(300)
+
+
+async def _run_pipeline_guarded():
+    if _pipeline_lock.locked():
+        return  # a run (scheduled or manual) is already in progress
+    async with _pipeline_lock:
+        await db.set_pipeline_state(status="running", started_at=now_iso())
+        try:
+            result = await pipeline.run_pipeline_once()
+            await db.set_pipeline_state(
+                status="idle", last_run_at=now_iso(), last_result=result, last_error=None,
+            )
+        except Exception as e:
+            logger.exception("pipeline run failed")
+            await db.set_pipeline_state(status="idle", last_run_at=now_iso(), last_error=str(e))
+            await db.log_run(
+                run_date=date.today().isoformat(), notes=f"Run failed: {e}",
+            )
 
 
 # ---------------------------------------------------------------- auth -----
@@ -243,70 +288,36 @@ async def delete_watchlist(item_id: str, ok: bool = Depends(require_session)):
 
 
 # --------------------------------------------------------- pipeline control --
-# Lets the dashboard ask the (hourly-polling) pipeline routine to run sooner
-# than its next scheduled slot, without the backend needing any credential
-# for Claude's cloud-routine trigger API (which is intentionally not
-# exportable). The routine checks `/api/internal/pipeline/should_run` on
-# every hourly wake-up and only does a full run if this flag is set or it's
-# the scheduled hour.
-
-SCHEDULED_RUN_HOUR_UTC = 1  # ~7:00am IST
-
+# The pipeline runs in-process (see pipeline.py) - "run now" just launches it
+# as a background task immediately, guarded so only one run happens at a
+# time. No routine/trigger credential involved.
 
 @app.post("/api/pipeline/run_now")
 async def request_pipeline_run(ok: bool = Depends(require_session)):
-    db = get_db()
-    await db.config.update_one(
-        {"_id": "pipeline_control"},
-        {"$set": {"manual_run_requested": True, "requested_at": now_iso()}},
-        upsert=True,
-    )
-    return {"ok": True}
+    if _pipeline_lock.locked():
+        return {"ok": True, "already_running": True}
+    asyncio.create_task(_run_pipeline_guarded())
+    return {"ok": True, "already_running": False}
 
 
 @app.get("/api/pipeline/status")
 async def pipeline_status(ok: bool = Depends(require_session)):
-    db = get_db()
-    doc = await db.config.find_one({"_id": "pipeline_control"}) or {}
+    state = await db.get_pipeline_state()
     return {
-        "manual_run_requested": bool(doc.get("manual_run_requested")),
-        "requested_at": doc.get("requested_at"),
-        "last_run_at": doc.get("last_run_at"),
+        "running": _pipeline_lock.locked(),
+        "last_run_at": state.get("last_run_at"),
+        "last_result": state.get("last_result"),
+        "last_error": state.get("last_error"),
     }
 
 
 # ------------------------------------------------------- internal (pipeline) --
 
-@app.get("/api/internal/pipeline/should_run")
-async def internal_should_run(ok: bool = Depends(require_api_key)):
-    """Called by the routine on every hourly wake-up. Returns quickly so an
-    off-schedule wake-up costs almost nothing."""
-    db = get_db()
-    doc = await db.config.find_one({"_id": "pipeline_control"}) or {}
-    manual = bool(doc.get("manual_run_requested"))
-    scheduled = datetime.now(timezone.utc).hour == SCHEDULED_RUN_HOUR_UTC
-    return {"should_run": manual or scheduled, "manual_triggered": manual, "scheduled": scheduled}
-
-
-@app.get("/api/internal/pipeline/ack")
-async def internal_ack_run(ok: bool = Depends(require_api_key)):
-    """Called by the routine after a full run completes - clears the manual
-    flag and records when the pipeline last actually ran."""
-    db = get_db()
-    await db.config.update_one(
-        {"_id": "pipeline_control"},
-        {"$set": {"manual_run_requested": False, "last_run_at": now_iso()}},
-        upsert=True,
-    )
-    return {"ok": True}
-
-
 @app.get("/api/internal/watchlist")
 async def internal_list_watchlist(ok: bool = Depends(require_api_key)):
-    """Used by the pipeline to check the user's custom company/career-page list each run."""
-    db = get_db()
-    cursor = db.watchlist.find({})
-    return [_watchlist_out(d) async for d in cursor]
+    """Kept for external/manual inspection - the in-process pipeline
+    (pipeline.py) reads the watchlist directly via db.list_watchlist()."""
+    return await db.list_watchlist()
 
 
 @app.get("/api/internal/config/base_resume")
@@ -364,32 +375,11 @@ async def internal_list_jobs(source: Optional[str] = None, ok: bool = Depends(re
     return out
 
 
-async def _upsert_one_job(job: dict) -> str:
-    """Returns 'inserted' or 'updated'."""
-    db = get_db()
-    key = make_dedupe_key(job)
-    job["dedupe_key"] = key
-    job.setdefault("applied", False)
-    job.setdefault("applied_at", None)
-    job.setdefault("resume_tailored", False)
-    job["updated_at"] = now_iso()
-    existing = await db.jobs.find_one({"dedupe_key": key})
-    if existing:
-        # never clobber applied state or timestamps set by the user
-        job.pop("applied", None)
-        job.pop("applied_at", None)
-        await db.jobs.update_one({"dedupe_key": key}, {"$set": job})
-        return "updated"
-    job["created_at"] = now_iso()
-    await db.jobs.insert_one(job)
-    return "inserted"
-
-
 @app.post("/api/internal/jobs/upsert")
 async def upsert_jobs(jobs: list[dict] = Body(...), ok: bool = Depends(require_api_key)):
     inserted, updated = 0, 0
     for job in jobs:
-        result = await _upsert_one_job(job)
+        result = await db.upsert_one_job(job)
         if result == "inserted":
             inserted += 1
         else:
@@ -406,7 +396,7 @@ async def upsert_one_job_get(job: str = Query(...), ok: bool = Depends(require_a
         job_dict = json.loads(job)
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"job must be valid JSON: {e}")
-    result = await _upsert_one_job(job_dict)
+    result = await db.upsert_one_job(job_dict)
     return {result: 1}
 
 
@@ -416,25 +406,9 @@ class ResumeBody(BaseModel):
     base_resume_version: Optional[str] = None
 
 
-async def _save_resume(job_id: str, content_text: str, base_resume_version: Optional[str]):
-    from bson import ObjectId
-    db = get_db()
-    await db.resumes.update_one(
-        {"job_id": job_id},
-        {"$set": {
-            "job_id": job_id,
-            "content_text": content_text,
-            "base_resume_version": base_resume_version,
-            "generated_at": now_iso(),
-        }},
-        upsert=True,
-    )
-    await db.jobs.update_one({"_id": ObjectId(job_id)}, {"$set": {"resume_tailored": True}})
-
-
 @app.post("/api/internal/resumes")
 async def save_resume(body: ResumeBody, ok: bool = Depends(require_api_key)):
-    await _save_resume(body.job_id, body.content_text, body.base_resume_version)
+    await db.save_resume(body.job_id, body.content_text, body.base_resume_version)
     return {"ok": True}
 
 
@@ -445,8 +419,8 @@ async def save_resume_get(
     base_resume_version: Optional[str] = Query(default=None),
     ok: bool = Depends(require_api_key),
 ):
-    """GET mirror of the POST above - see DAILY_PIPELINE_RUNBOOK.md."""
-    await _save_resume(job_id, content_text, base_resume_version)
+    """GET mirror of the POST above - see README.md."""
+    await db.save_resume(job_id, content_text, base_resume_version)
     return {"ok": True}
 
 
@@ -458,18 +432,9 @@ class RunBody(BaseModel):
     notes: str = ""
 
 
-async def _log_run(run_date: str, jobs_added: int, jobs_reviewed: int, resumes_generated: int, notes: str):
-    db = get_db()
-    doc = {
-        "run_date": run_date, "jobs_added": jobs_added, "jobs_reviewed": jobs_reviewed,
-        "resumes_generated": resumes_generated, "notes": notes, "finished_at": now_iso(),
-    }
-    await db.runs.insert_one(doc)
-
-
 @app.post("/api/internal/runs")
-async def log_run(body: RunBody, ok: bool = Depends(require_api_key)):
-    await _log_run(body.run_date, body.jobs_added, body.jobs_reviewed, body.resumes_generated, body.notes)
+async def log_run_route(body: RunBody, ok: bool = Depends(require_api_key)):
+    await db.log_run(body.run_date, body.jobs_added, body.jobs_reviewed, body.resumes_generated, body.notes)
     return {"ok": True}
 
 
@@ -482,8 +447,8 @@ async def log_run_get(
     notes: str = Query(default=""),
     ok: bool = Depends(require_api_key),
 ):
-    """GET mirror of the POST above - see DAILY_PIPELINE_RUNBOOK.md."""
-    await _log_run(run_date, jobs_added, jobs_reviewed, resumes_generated, notes)
+    """GET mirror of the POST above - see README.md."""
+    await db.log_run(run_date, jobs_added, jobs_reviewed, resumes_generated, notes)
     return {"ok": True}
 
 

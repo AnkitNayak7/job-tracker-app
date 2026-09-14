@@ -1,25 +1,29 @@
 # Job Tracker — web app
 
 A password-protected dashboard (JS frontend + Python/FastAPI backend +
-MongoDB) that replaces the Excel tracker. A daily scheduled Claude session
-pulls new job postings, rates them against Ankit's profile, tailors a
-resume for the strongest product-company matches, and writes everything
-into MongoDB. The site just displays what's in the database and lets you
-mark roles as Applied — which then also shows up on the Follow-up tab.
+MongoDB) that replaces the Excel tracker. A pipeline built into the backend
+calls the Claude API directly (once a day automatically, or on demand from
+the dashboard) to pull new job postings — including any companies you add
+to the watchlist — rate them against Ankit's profile, tailor a resume for
+the strongest matches, and write everything into MongoDB. The site displays
+what's in the database and lets you mark roles as Applied — which then also
+shows up on the Follow-up tab.
 
 ## What's in this folder
 
 ```
 backend/        FastAPI app (API + serves the frontend)
-  main.py         all routes
+  main.py         all routes + the daily scheduler
+  pipeline.py     the job-pull pipeline (calls the Claude API directly)
   db.py           MongoDB access + schema notes
-  auth.py         password-cookie auth (dashboard) + API-key auth (pipeline)
+  auth.py         password-cookie auth (dashboard) + API-key auth (internal endpoints)
   requirements.txt
 frontend/       Plain HTML/CSS/JS dashboard, no build step
   index.html, app.js, style.css
 Dockerfile      Single-container build (backend serves frontend as static files)
-DAILY_PIPELINE_RUNBOOK.md   The exact instructions for the daily scheduled
-                             job-pull — this becomes the scheduled task's prompt.
+DAILY_PIPELINE_RUNBOOK.md   How the pipeline works, its prompt content, and
+                             known limitations (see backend/pipeline.py for
+                             the actual source of truth).
 ```
 
 ## Why deployment needs one manual step from you
@@ -70,6 +74,7 @@ export MONGO_URL="mongodb://localhost:27017"
 export SITE_PASSWORD="pick-something"
 export SESSION_SECRET="pick-something-random"
 export INTERNAL_API_KEY="pick-something-random"
+export ANTHROPIC_API_KEY="sk-ant-..."  # required for the pipeline to run; app works without it otherwise
 uvicorn main:app --reload --port 8080
 ```
 

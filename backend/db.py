@@ -83,3 +83,102 @@ def make_dedupe_key(job: dict) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def upsert_one_job(job: dict) -> str:
+    """Insert or update a job posting by its dedupe key. Returns 'inserted' or
+    'updated'. Shared by the internal HTTP endpoints and the in-process
+    pipeline (backend/pipeline.py) so both write through the same path."""
+    db = get_db()
+    job = dict(job)
+    key = make_dedupe_key(job)
+    job["dedupe_key"] = key
+    job.setdefault("applied", False)
+    job.setdefault("applied_at", None)
+    job.setdefault("resume_tailored", False)
+    job["updated_at"] = now_iso()
+    existing = await db.jobs.find_one({"dedupe_key": key})
+    if existing:
+        # never clobber applied state or timestamps set by the user
+        job.pop("applied", None)
+        job.pop("applied_at", None)
+        await db.jobs.update_one({"dedupe_key": key}, {"$set": job})
+        return "updated"
+    job["created_at"] = now_iso()
+    await db.jobs.insert_one(job)
+    return "inserted"
+
+
+async def find_job_id_by_apply_url(apply_url: str) -> "str | None":
+    """Look up a job's Mongo id by its apply_url (via the same dedupe key
+    upsert_one_job used), for linking a tailored resume to its posting."""
+    db = get_db()
+    key = make_dedupe_key({"apply_url": apply_url})
+    doc = await db.jobs.find_one({"dedupe_key": key}, {"_id": 1})
+    return str(doc["_id"]) if doc else None
+
+
+async def save_resume(job_id: str, content_text: str, base_resume_version: "str | None" = None) -> None:
+    from bson import ObjectId
+    db = get_db()
+    await db.resumes.update_one(
+        {"job_id": job_id},
+        {"$set": {
+            "job_id": job_id,
+            "content_text": content_text,
+            "base_resume_version": base_resume_version,
+            "generated_at": now_iso(),
+        }},
+        upsert=True,
+    )
+    await db.jobs.update_one({"_id": ObjectId(job_id)}, {"$set": {"resume_tailored": True}})
+
+
+async def log_run(run_date: str, jobs_added: int = 0, jobs_reviewed: int = 0,
+                   resumes_generated: int = 0, notes: str = "") -> None:
+    db = get_db()
+    doc = {
+        "run_date": run_date, "jobs_added": jobs_added, "jobs_reviewed": jobs_reviewed,
+        "resumes_generated": resumes_generated, "notes": notes, "finished_at": now_iso(),
+    }
+    await db.runs.insert_one(doc)
+
+
+async def get_base_resume_text() -> str:
+    db = get_db()
+    doc = await db.config.find_one({"_id": "base_resume"})
+    return (doc or {}).get("text", "")
+
+
+async def list_watchlist() -> list:
+    db = get_db()
+    out = []
+    async for d in db.watchlist.find({}):
+        d = dict(d)
+        d["id"] = str(d.pop("_id"))
+        out.append(d)
+    return out
+
+
+async def list_job_summaries(source: "str | None" = None) -> list:
+    """Compact view of already-tracked postings (title/company/location/date/
+    apply_url) for a source, so the pipeline can dedupe without resending or
+    re-rating full job docs."""
+    db = get_db()
+    query = {"source": source} if source else {}
+    projection = {"title": 1, "company_or_family": 1, "location": 1, "posted_date": 1, "apply_url": 1}
+    out = []
+    async for d in db.jobs.find(query, projection):
+        d.pop("_id", None)
+        out.append(d)
+    return out
+
+
+async def get_pipeline_state() -> dict:
+    db = get_db()
+    return await db.config.find_one({"_id": "pipeline_control"}) or {}
+
+
+async def set_pipeline_state(**fields) -> None:
+    db = get_db()
+    await db.config.update_one({"_id": "pipeline_control"}, {"$set": fields}, upsert=True)

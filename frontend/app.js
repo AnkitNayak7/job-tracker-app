@@ -82,23 +82,46 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
   });
 });
 
+let pipelinePollTimer = null;
+
 el("run-now-btn").addEventListener("click", async () => {
   el("run-now-btn").disabled = true;
   try {
     await api("/api/pipeline/run_now", { method: "POST" });
-    await loadPipelineStatus();
   } finally {
-    el("run-now-btn").disabled = false;
+    await loadPipelineStatus();
   }
 });
 
 async function loadPipelineStatus() {
   const s = await api("/api/pipeline/status");
   const statusEl = el("run-now-status");
-  if (s.manual_run_requested) {
-    statusEl.textContent = "Requested — the pipeline checks hourly, so it'll run within the hour.";
+  el("run-now-btn").disabled = s.running;
+
+  if (s.running) {
+    statusEl.textContent = "Running — this can take a few minutes (live search + rating)…";
+    if (!pipelinePollTimer) {
+      pipelinePollTimer = setInterval(async () => {
+        const cur = await api("/api/pipeline/status");
+        if (!cur.running) {
+          clearInterval(pipelinePollTimer);
+          pipelinePollTimer = null;
+          await loadPipelineStatus();
+          loadSummary();
+          loadTab();
+        }
+      }, 8000);
+    }
+  } else if (s.last_error) {
+    statusEl.textContent = `Last run failed: ${s.last_error}`;
   } else if (s.last_run_at) {
-    statusEl.textContent = `Last run: ${new Date(s.last_run_at).toLocaleString()}`;
+    const r = s.last_result || {};
+    const parts = [];
+    if (r.jobs_inserted != null) parts.push(`${r.jobs_inserted} new`);
+    if (r.jobs_updated != null) parts.push(`${r.jobs_updated} updated`);
+    if (r.resumes_saved != null) parts.push(`${r.resumes_saved} resumes`);
+    const detail = parts.length ? ` (${parts.join(", ")})` : "";
+    statusEl.textContent = `Last run: ${new Date(s.last_run_at).toLocaleString()}${detail}`;
   } else {
     statusEl.textContent = "";
   }
