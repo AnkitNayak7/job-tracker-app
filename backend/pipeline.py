@@ -65,7 +65,7 @@ RECORD_JOB_TOOL = {
             "location": {"type": "string"},
             "posted_date": {"type": "string", "description": "YYYY-MM-DD"},
             "experience_req": {"type": "string"},
-            "fit_score": {"type": "integer", "minimum": 1, "maximum": 5},
+            "fit_score": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
             "fit_label": {"type": "string", "enum": ["Excellent", "Strong", "Moderate", "Weak", "Skip"]},
             "jd_reviewed": {"type": "boolean"},
             "why": {"type": "string", "description": "One-to-two sentence rationale grounded in the JD."},
