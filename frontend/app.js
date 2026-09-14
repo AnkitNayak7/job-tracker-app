@@ -32,6 +32,7 @@ function showApp() {
   el("login-view").classList.add("hidden");
   el("app-view").classList.remove("hidden");
   loadSummary();
+  loadPipelineStatus();
   loadTab();
 }
 
@@ -74,10 +75,106 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     state.tab = btn.dataset.tab;
-    const showFilters = state.tab === "accenture" || state.tab === "product";
+    const showFilters = state.tab === "accenture" || state.tab === "product" || state.tab === "watchlist-jobs";
     document.querySelector(".filters").style.display = showFilters ? "flex" : "none";
+    el("watchlist-form-wrap").classList.toggle("hidden", state.tab !== "watchlist");
     loadTab();
   });
+});
+
+el("run-now-btn").addEventListener("click", async () => {
+  el("run-now-btn").disabled = true;
+  try {
+    await api("/api/pipeline/run_now", { method: "POST" });
+    await loadPipelineStatus();
+  } finally {
+    el("run-now-btn").disabled = false;
+  }
+});
+
+async function loadPipelineStatus() {
+  const s = await api("/api/pipeline/status");
+  const statusEl = el("run-now-status");
+  if (s.manual_run_requested) {
+    statusEl.textContent = "Requested — the pipeline checks hourly, so it'll run within the hour.";
+  } else if (s.last_run_at) {
+    statusEl.textContent = `Last run: ${new Date(s.last_run_at).toLocaleString()}`;
+  } else {
+    statusEl.textContent = "";
+  }
+}
+
+function watchlistRow(item) {
+  return `
+    <tr>
+      <td>${escapeHtml(item.company_name)}</td>
+      <td><a class="apply-link" href="${item.career_url}" target="_blank" rel="noopener">${escapeHtml(item.career_url)}</a></td>
+      <td class="why">${escapeHtml(item.notes || "")}</td>
+      <td class="watchlist-actions">
+        <button type="button" class="ghost small edit-watchlist-btn" data-id="${item.id}">Edit</button>
+        <button type="button" class="ghost small delete-watchlist-btn" data-id="${item.id}">Delete</button>
+      </td>
+    </tr>`;
+}
+
+async function loadWatchlistManage() {
+  const items = await api("/api/watchlist");
+  if (!items.length) {
+    el("table-wrap").innerHTML = `<div class="empty-state">No companies added yet — use the form above to add one.</div>`;
+  } else {
+    el("table-wrap").innerHTML = `
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Company</th><th>Career page</th><th>Notes</th><th></th></tr></thead>
+        <tbody>${items.map(watchlistRow).join("")}</tbody>
+      </table>
+      </div>`;
+  }
+  document.querySelectorAll(".edit-watchlist-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const item = items.find((i) => i.id === btn.dataset.id);
+      el("watchlist-edit-id").value = item.id;
+      el("watchlist-company").value = item.company_name;
+      el("watchlist-url").value = item.career_url;
+      el("watchlist-notes").value = item.notes || "";
+      el("watchlist-submit-btn").textContent = "Save changes";
+      el("watchlist-cancel-btn").classList.remove("hidden");
+      el("watchlist-company").focus();
+    });
+  });
+  document.querySelectorAll(".delete-watchlist-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Remove this company from the watchlist?")) return;
+      await api(`/api/watchlist/${btn.dataset.id}`, { method: "DELETE" });
+      loadWatchlistManage();
+    });
+  });
+}
+
+function resetWatchlistForm() {
+  el("watchlist-form").reset();
+  el("watchlist-edit-id").value = "";
+  el("watchlist-submit-btn").textContent = "Add company";
+  el("watchlist-cancel-btn").classList.add("hidden");
+}
+
+el("watchlist-cancel-btn").addEventListener("click", resetWatchlistForm);
+
+el("watchlist-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = JSON.stringify({
+    company_name: el("watchlist-company").value.trim(),
+    career_url: el("watchlist-url").value.trim(),
+    notes: el("watchlist-notes").value.trim(),
+  });
+  const editId = el("watchlist-edit-id").value;
+  if (editId) {
+    await api(`/api/watchlist/${editId}`, { method: "PUT", body });
+  } else {
+    await api("/api/watchlist", { method: "POST", body });
+  }
+  resetWatchlistForm();
+  loadWatchlistManage();
 });
 
 el("min-fit-filter").addEventListener("change", (e) => {
@@ -96,6 +193,8 @@ async function loadSummary() {
     ["Accenture strong+", s.Accenture?.strong_or_excellent ?? 0],
     ["Product open", s.Product?.total ?? 0],
     ["Product strong+", s.Product?.strong_or_excellent ?? 0],
+    ["Watchlist open", s.Watchlist?.total ?? 0],
+    ["Watchlist strong+", s.Watchlist?.strong_or_excellent ?? 0],
     ["Applied (total)", s.applied_total ?? 0],
     ["Resumes tailored", s.resumes_generated ?? 0],
   ];
@@ -165,11 +264,13 @@ function renderJobsTable(jobs, opts = {}) {
 }
 
 async function loadTab() {
-  if (state.tab === "accenture" || state.tab === "product") {
-    const source = state.tab === "accenture" ? "Accenture" : "Product";
+  if (state.tab === "accenture" || state.tab === "product" || state.tab === "watchlist-jobs") {
+    const source = state.tab === "accenture" ? "Accenture" : state.tab === "product" ? "Product" : "Watchlist";
     let jobs = await api(`/api/jobs?source=${source}`);
     jobs = jobs.filter((j) => j.fit_score >= state.minFit && (!state.appliedOnly || j.applied));
     renderJobsTable(jobs, { companyLabel: source === "Accenture" ? "Family" : "Company" });
+  } else if (state.tab === "watchlist") {
+    await loadWatchlistManage();
   } else if (state.tab === "followup") {
     const jobs = await api(`/api/jobs?applied=yes&include_stale=true`);
     renderJobsTable(jobs, { companyLabel: "Company / Family" });

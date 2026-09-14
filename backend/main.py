@@ -1,7 +1,7 @@
 import io
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response
@@ -154,7 +154,7 @@ async def summary(ok: bool = Depends(require_session)):
     cutoff = (date.today() - timedelta(days=STALE_DAYS)).isoformat()
     active_or_applied = {"$or": [{"posted_date": {"$gte": cutoff}}, {"applied": True}]}
     out = {}
-    for source in ("Accenture", "Product"):
+    for source in ("Accenture", "Product", "Watchlist"):
         q = {"source": source, **active_or_applied}
         total = await db.jobs.count_documents(q)
         strong = await db.jobs.count_documents({**q, "fit_score": {"$gte": 4}})
@@ -181,7 +181,133 @@ async def list_runs(limit: int = 20, ok: bool = Depends(require_session)):
     return out
 
 
+# ------------------------------------------------------------ watchlist ----
+
+class WatchlistItem(BaseModel):
+    company_name: str
+    career_url: str
+    notes: Optional[str] = ""
+
+
+def _watchlist_out(doc: dict) -> dict:
+    doc = dict(doc)
+    doc["id"] = str(doc.pop("_id"))
+    return doc
+
+
+@app.get("/api/watchlist")
+async def list_watchlist(ok: bool = Depends(require_session)):
+    db = get_db()
+    cursor = db.watchlist.find({}).sort("company_name", 1)
+    return [_watchlist_out(d) async for d in cursor]
+
+
+@app.post("/api/watchlist")
+async def add_watchlist(item: WatchlistItem, ok: bool = Depends(require_session)):
+    db = get_db()
+    doc = item.model_dump()
+    doc["created_at"] = now_iso()
+    doc["updated_at"] = now_iso()
+    res = await db.watchlist.insert_one(doc)
+    return {"id": str(res.inserted_id)}
+
+
+@app.put("/api/watchlist/{item_id}")
+async def update_watchlist(item_id: str, item: WatchlistItem, ok: bool = Depends(require_session)):
+    from bson import ObjectId
+    db = get_db()
+    update = item.model_dump()
+    update["updated_at"] = now_iso()
+    try:
+        oid = ObjectId(item_id)
+    except Exception:
+        raise HTTPException(400, "Invalid watchlist id")
+    res = await db.watchlist.update_one({"_id": oid}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Watchlist item not found")
+    return {"ok": True}
+
+
+@app.delete("/api/watchlist/{item_id}")
+async def delete_watchlist(item_id: str, ok: bool = Depends(require_session)):
+    from bson import ObjectId
+    db = get_db()
+    try:
+        oid = ObjectId(item_id)
+    except Exception:
+        raise HTTPException(400, "Invalid watchlist id")
+    res = await db.watchlist.delete_one({"_id": oid})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Watchlist item not found")
+    return {"ok": True}
+
+
+# --------------------------------------------------------- pipeline control --
+# Lets the dashboard ask the (hourly-polling) pipeline routine to run sooner
+# than its next scheduled slot, without the backend needing any credential
+# for Claude's cloud-routine trigger API (which is intentionally not
+# exportable). The routine checks `/api/internal/pipeline/should_run` on
+# every hourly wake-up and only does a full run if this flag is set or it's
+# the scheduled hour.
+
+SCHEDULED_RUN_HOUR_UTC = 1  # ~7:00am IST
+
+
+@app.post("/api/pipeline/run_now")
+async def request_pipeline_run(ok: bool = Depends(require_session)):
+    db = get_db()
+    await db.config.update_one(
+        {"_id": "pipeline_control"},
+        {"$set": {"manual_run_requested": True, "requested_at": now_iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@app.get("/api/pipeline/status")
+async def pipeline_status(ok: bool = Depends(require_session)):
+    db = get_db()
+    doc = await db.config.find_one({"_id": "pipeline_control"}) or {}
+    return {
+        "manual_run_requested": bool(doc.get("manual_run_requested")),
+        "requested_at": doc.get("requested_at"),
+        "last_run_at": doc.get("last_run_at"),
+    }
+
+
 # ------------------------------------------------------- internal (pipeline) --
+
+@app.get("/api/internal/pipeline/should_run")
+async def internal_should_run(ok: bool = Depends(require_api_key)):
+    """Called by the routine on every hourly wake-up. Returns quickly so an
+    off-schedule wake-up costs almost nothing."""
+    db = get_db()
+    doc = await db.config.find_one({"_id": "pipeline_control"}) or {}
+    manual = bool(doc.get("manual_run_requested"))
+    scheduled = datetime.now(timezone.utc).hour == SCHEDULED_RUN_HOUR_UTC
+    return {"should_run": manual or scheduled, "manual_triggered": manual, "scheduled": scheduled}
+
+
+@app.get("/api/internal/pipeline/ack")
+async def internal_ack_run(ok: bool = Depends(require_api_key)):
+    """Called by the routine after a full run completes - clears the manual
+    flag and records when the pipeline last actually ran."""
+    db = get_db()
+    await db.config.update_one(
+        {"_id": "pipeline_control"},
+        {"$set": {"manual_run_requested": False, "last_run_at": now_iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@app.get("/api/internal/watchlist")
+async def internal_list_watchlist(ok: bool = Depends(require_api_key)):
+    """Used by the pipeline to check the user's custom company/career-page list each run."""
+    db = get_db()
+    cursor = db.watchlist.find({})
+    return [_watchlist_out(d) async for d in cursor]
+
 
 @app.get("/api/internal/config/base_resume")
 async def get_base_resume(ok: bool = Depends(require_api_key)):

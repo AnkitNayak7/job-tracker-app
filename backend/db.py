@@ -18,8 +18,11 @@ resumes   One document per tailored resume, keyed by job_id.
             { _id, job_id, generated_at, content_text, base_resume_version }
 config    Small singleton docs, keyed by _id.
             { _id: "base_resume", text, updated_at, filename }
+            { _id: "pipeline_control", manual_run_requested, requested_at, last_run_at }
 runs      One document per daily pipeline run (append-only log).
             { _id, run_date, jobs_added, jobs_reviewed, resumes_generated, notes, finished_at }
+watchlist One document per user-submitted company/career page to check every run.
+            { _id, company_name, career_url, notes, created_at, updated_at }
 """
 import hashlib
 import os
@@ -57,6 +60,7 @@ async def ensure_indexes():
     await db.jobs.create_index("posted_date")
     await db.resumes.create_index("job_id", unique=True)
     await db.runs.create_index("run_date")
+    await db.watchlist.create_index("company_name")
 
 
 def make_dedupe_key(job: dict) -> str:

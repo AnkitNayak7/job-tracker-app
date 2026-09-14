@@ -1,36 +1,45 @@
-# Daily job-pull pipeline — runbook / scheduled-task prompt
+# Job-pull pipeline — runbook / scheduled-task prompt
 
-This is the exact procedure a fresh Claude session should run once a day to
-refresh Ankit Nayak's Job Tracker. Once the app is deployed, this text
-(with the placeholders filled in) becomes the `prompt` of a daily scheduled
-task (`create_trigger`), so every firing is self-contained — it must not
-assume any memory of previous runs beyond what's stored in MongoDB via the
-API below.
+This is the exact procedure a fresh Claude session should run to refresh
+Ankit Nayak's Job Tracker. The routine wakes up **hourly** (the platform's
+minimum interval) but only does a full run when told to — see step 0. Every
+firing is self-contained — it must not assume any memory of previous runs
+beyond what's stored in MongoDB via the API below.
 
 Placeholders to fill in after deployment:
 - `{{API_BASE_URL}}` — the Railway public URL, e.g. `https://backend-production-ecca8.up.railway.app`
 - `{{API_KEY}}` — the `INTERNAL_API_KEY` value set on the Railway service
 
-## IMPORTANT — transport constraint discovered during setup
+## Transport
 
-This sandboxed environment's outbound network (the `Bash` tool's egress)
-blocks arbitrary HTTPS hosts including Railway's own app domains
-(`*.up.railway.app`) by organization policy — `curl`/`requests`/any direct
-HTTP client called from `Bash` cannot reach the backend. The **`WebFetch`
-tool can** reach it (it runs through a separate, unrestricted path) but it
-only issues GET requests and cannot send a custom header or a request
-body. Because of this, every internal write in this runbook uses the
-**GET-based mirror endpoints** (`/api/internal/.../*_get`, `/upsert_one`,
-`/save`, `/log`, `/set`) with the API key and payload passed as URL query
-parameters, called via `WebFetch` — never `Bash`/`curl` for the actual
-HTTP call. Use `Bash` only to build the encoded URL string (e.g. with
-Python's `urllib.parse.quote`), then hand that finished URL to `WebFetch`.
-If a future session finds `Bash` can reach `{{API_BASE_URL}}` directly
-(the policy may differ or change), the original POST endpoints
+Try `curl {{API_BASE_URL}}/health` via `Bash` first each run. If `Bash` can
+reach the backend directly, use the normal POST endpoints
 (`/api/internal/jobs/upsert`, `/api/internal/resumes`, `/api/internal/runs`,
-`/api/internal/config/base_resume`) are simpler and fine to use instead —
-try a quick `curl {{API_BASE_URL}}/health` from Bash first each run to see
-which path is available.
+`/api/internal/config/base_resume`) with header `X-API-Key: {{API_KEY}}`.
+If `Bash` cannot reach it (egress to `*.up.railway.app` blocked), fall back
+to the **GET-mirror endpoints** (`/api/internal/jobs/upsert_one`,
+`/api/internal/resumes/save`, `/api/internal/runs/log`,
+`/api/internal/config/base_resume/set`) called via the `WebFetch` tool,
+with the API key and payload passed as URL query parameters
+(`api_key=...`), built with `Bash`/Python URL-encoding first (ask WebFetch
+to "return the raw response body verbatim" so you get exact JSON back).
+
+## Step 0 — should this wake-up do a full run?
+
+Every hourly fire, first check:
+`GET {{API_BASE_URL}}/api/internal/pipeline/should_run?api_key={{API_KEY}}`
+→ `{"should_run": bool, "manual_triggered": bool, "scheduled": bool}`.
+
+- `should_run: false` → **stop immediately**, do nothing else. This keeps
+  off-schedule hourly wake-ups essentially free.
+- `should_run: true` → proceed with the full run below. This happens either
+  because it's the scheduled hour (~7am IST) or because Ankit clicked
+  "Run pipeline now" on the dashboard (`manual_triggered: true`).
+
+At the very end of a full run (step 7), always call
+`GET {{API_BASE_URL}}/api/internal/pipeline/ack?api_key={{API_KEY}}` — this
+clears the manual-run flag and records `last_run_at`, so a manual click
+doesn't cause a second run on the next hourly wake-up.
 
 ## Who this is for
 
@@ -47,7 +56,7 @@ Three role families, across **Bengaluru, Hyderabad, Pune** only:
 2. AI & GenAI Product Manager
 3. Delivery / Engagement Manager
 
-Two sources, tagged in the `source` field:
+Three sources, tagged in the `source` field:
 - `"Accenture"` — all open reqs matching the families/locations above.
 - `"Product"` — genuine product-based companies only. Excludes
   IT-services/consulting/staffing firms (Accenture, TCS, Infosys, Wipro,
@@ -55,10 +64,41 @@ Two sources, tagged in the `source` field:
   and pure banks/insurers with no core software product. Healthcare-tech /
   payer platforms that build software (UnitedHealth/Optum, Zelis, Cohere
   Health) DO count; plain insurers/banks (Synchrony, Citi, Barclays) do not.
-- Standing extra source to check every run: **Light & Wonder's careers
-  page** (Workday board, Bengaluru filter) — a gaming/casino-tech product
-  company. It's a JS SPA; use a browser tool (not WebFetch), accept the
-  cookie banner, then read the job list.
+- `"Watchlist"` — Ankit's own hand-picked companies (see below). Location
+  and role-family filters still apply here — a watchlist company doesn't
+  bypass scope, it just guarantees its career page gets checked every run.
+
+## Watchlist — user-submitted companies/career pages
+
+`GET {{API_BASE_URL}}/api/internal/watchlist?api_key={{API_KEY}}` returns
+`[{"id", "company_name", "career_url", "notes"}, ...]` — companies Ankit
+added from the dashboard. For every entry:
+
+1. Open `career_url`. Try `WebFetch` first. Many career pages (Workday,
+   Greenhouse SPA views, etc.) render nothing useful to WebFetch because
+   the listing is built client-side with JS — if the fetched content looks
+   like an empty app shell (no job titles/links in the text), fall back to
+   the JS-rendering browser step below.
+2. **JS-rendering fallback (Playwright via Bash):** if not already
+   installed this session, run
+   `pip install --quiet playwright && playwright install --with-deps chromium`
+   via `Bash`, then drive it with a short Python script (sync API) that:
+   navigates to `career_url`, waits for network-idle / the job-list
+   selector to appear, accepts any cookie-consent banner, and extracts job
+   titles + links (and, for a Workday-style board, applies the
+   Bengaluru/Hyderabad/Pune location filter in the UI first if one
+   exists). Print the extracted listing as JSON/text so the rest of the
+   run can consume it.
+3. Rate and file matches the same way as any other posting, tagged
+   `"source": "Watchlist"`, `"company_or_family": <company_name>`.
+4. If a watchlist URL 404s, times out, or its structure defeats both
+   WebFetch and the Playwright script, skip it for this run and mention it
+   in the run log's `notes` (don't guess at content, and don't retry
+   endlessly within one run).
+
+This same Playwright approach is also how to handle any other JS-heavy
+source you encounter (nothing is hardcoded as "browser-tool-only" anymore
+— try WebFetch, fall back to Playwright whenever the page is a JS SPA).
 
 ## Hard rule: 60-day cutoff
 
@@ -83,25 +123,27 @@ language. Fetch the full JD for anything promising or ambiguous (mark
 
 1. **Load what's already tracked** (to dedupe and to avoid re-rating), via
    `WebFetch`:
-   `{{API_BASE_URL}}/api/internal/jobs?source=Accenture&api_key={{API_KEY}}`
-   and the same with `source=Product`. Each entry has `apply_url` and
-   `posted_date` — skip anything you'd otherwise fetch that matches an
-   existing `apply_url` (stripped of query string) or an existing
-   title+company+location+posted_date combo. Ask WebFetch to "return the
-   raw response body verbatim" so you get exact JSON back, not a summary.
+   `{{API_BASE_URL}}/api/internal/jobs?source=Accenture&api_key={{API_KEY}}`,
+   and the same with `source=Product` and `source=Watchlist`. Each entry
+   has `apply_url` and `posted_date` — skip anything you'd otherwise fetch
+   that matches an existing `apply_url` (stripped of query string) or an
+   existing title+company+location+posted_date combo. Ask WebFetch to
+   "return the raw response body verbatim" so you get exact JSON back, not
+   a summary.
 
 2. **Search.** Run job searches per role family × per city for both
    Accenture-specific and generic/product-company queries (e.g. Indeed
-   search tools, or whatever job-search tool this session has). Also open
-   the Light & Wonder Workday board via a browser tool and read its
-   current listing. Drop anything past the 60-day cutoff immediately.
+   search tools, or whatever job-search tool this session has). Also work
+   through every watchlist entry per the Watchlist section above. Drop
+   anything past the 60-day cutoff immediately.
 
 3. **Fetch & rate new postings.** For everything not already tracked and
    within the cutoff: fetch the full JD for promising/ambiguous ones, rate
    1–5 per the scale above, write a one-line `why`.
 
-4. **Tailor a resume for high-fit product-company roles.** For every
-   posting with `fit_score >= 4`:
+4. **Tailor a resume for high-fit product-company or watchlist roles.**
+   For every posting with `fit_score >= 4` and `source` in `Product` or
+   `Watchlist`:
    a. `WebFetch` `{{API_BASE_URL}}/api/internal/config/base_resume?api_key={{API_KEY}}`
       to get the current base resume text.
    b. If it's empty, skip resume generation for this run and note it in
@@ -126,7 +168,7 @@ language. Fetch the full JD for anything promising or ambiguous (mark
      where the JSON object is:
      ```json
      {
-       "source": "Accenture" | "Product",
+       "source": "Accenture" | "Product" | "Watchlist",
        "title": "...", "company_or_family": "...", "location": "...",
        "posted_date": "YYYY-MM-DD", "experience_req": "...",
        "fit_score": 1-5, "fit_label": "Excellent|Strong|Moderate|Weak|Skip",
@@ -142,11 +184,15 @@ language. Fetch the full JD for anything promising or ambiguous (mark
      `{{API_BASE_URL}}/api/internal/resumes/save?api_key={{API_KEY}}&job_id=<id>&content_text=<url-encoded tailored resume text>`.
 
 6. **Log the run.**
-   `{{API_BASE_URL}}/api/internal/runs/log?api_key={{API_KEY}}&run_date=YYYY-MM-DD&jobs_added=N&jobs_reviewed=N&resumes_generated=N&notes=<url-encoded short summary>`.
+   `{{API_BASE_URL}}/api/internal/runs/log?api_key={{API_KEY}}&run_date=YYYY-MM-DD&jobs_added=N&jobs_reviewed=N&resumes_generated=N&notes=<url-encoded short summary>`
+   — mention any watchlist entries that failed to load in `notes`.
 
-7. Do not message the user unless something needs their attention (e.g.
-   base resume missing, a source became unreachable, or the Light &
-   Wonder board structure changed and needs a human look). Routine
+7. **Acknowledge the run** (clears the manual-trigger flag):
+   `GET {{API_BASE_URL}}/api/internal/pipeline/ack?api_key={{API_KEY}}`.
+
+8. Do not message the user unless something needs their attention (e.g.
+   base resume missing, a source became unreachable, or a watchlist
+   company's page structure changed and needs a human look). Routine
    successful runs are silent — the user checks the dashboard when they
    want to.
 
@@ -160,3 +206,12 @@ language. Fetch the full JD for anything promising or ambiguous (mark
 - `apply_url` is the dedupe key when present (query string stripped);
   fall back to title+company+location+posted_date only when a posting has
   no URL.
+- Ankit manages the watchlist himself from the dashboard's "Manage
+  Watchlist" tab (`GET/POST/PUT/DELETE /api/watchlist`, cookie-auth) — the
+  pipeline only ever reads it via the internal endpoint above.
+- The hourly should_run/ack pair exists purely so the dashboard's "Run
+  pipeline now" button can get a run going within the hour instead of
+  waiting for the next scheduled slot. If per-hour wake-up cost ever
+  becomes a concern, the schedule can revert to a single daily fire and
+  the button removed/disabled — should_run degrades gracefully either way
+  since it just checks a Mongo flag.

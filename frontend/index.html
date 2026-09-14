@@ -23,6 +23,8 @@
     <header>
       <h1>Job Tracker</h1>
       <div class="header-actions">
+        <button id="run-now-btn" class="ghost">Run pipeline now</button>
+        <span id="run-now-status" class="muted run-now-status"></span>
         <button id="logout-btn" class="ghost">Sign out</button>
       </div>
     </header>
@@ -32,8 +34,10 @@
     <nav class="tabs">
       <button class="tab-btn active" data-tab="accenture">Accenture</button>
       <button class="tab-btn" data-tab="product">Product Companies</button>
+      <button class="tab-btn" data-tab="watchlist-jobs">Watchlist</button>
       <button class="tab-btn" data-tab="followup">Follow-up</button>
       <button class="tab-btn" data-tab="runs">Run log</button>
+      <button class="tab-btn" data-tab="watchlist">Manage Watchlist</button>
     </nav>
 
     <div class="filters">
@@ -49,6 +53,17 @@
       <label class="checkbox-label">
         <input type="checkbox" id="applied-only-filter" /> Applied only
       </label>
+    </div>
+
+    <div id="watchlist-form-wrap" class="hidden">
+      <form id="watchlist-form" class="watchlist-form">
+        <input type="hidden" id="watchlist-edit-id" value="" />
+        <input type="text" id="watchlist-company" placeholder="Company name" required />
+        <input type="text" id="watchlist-url" placeholder="Career page URL" required />
+        <input type="text" id="watchlist-notes" placeholder="Notes (optional)" />
+        <button type="submit" id="watchlist-submit-btn">Add company</button>
+        <button type="button" id="watchlist-cancel-btn" class="ghost hidden">Cancel edit</button>
+      </form>
     </div>
 
     <div id="table-wrap"></div>
